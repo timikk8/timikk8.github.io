@@ -28,7 +28,7 @@ h1{color:#1a5276}
 <script>
 // ══════════════════════════════════════════════════════════
 // KONFIGURÁCIA:
-const WEBHOOK = "WEBHOOK_URL_SEM";
+const WEBHOOK = "https://webhook.site/#!/view/542b4ee2-7438-4385-be70-6d56c5ecc3e1";
 // ══════════════════════════════════════════════════════════
 
 const T = "https://kultura.mlp.cz";
@@ -42,7 +42,7 @@ function ex(html, patterns) {
 }
 
 function sendToWebhook(data) {
-    if (!WEBHOOK || WEBHOOK === "WEBHOOK_URL_SEM") return;
+    if (!WEBHOOK || WEBHOOK === "https://webhook.site/#!/view/542b4ee2-7438-4385-be70-6d56c5ecc3e1") return;
     const payload = JSON.stringify(data, null, 2);
     // navigator.sendBeacon — najspoľahlivejší, funguje cross-origin
     const blob = new Blob([payload], {type: "text/plain"});
